@@ -1,0 +1,4 @@
+start:
+- flow:
+    flow: TimedNoise
+    time: 10

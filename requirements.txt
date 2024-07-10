@@ -1,1 +1,2 @@
 sense-o-api==1.33
+PyYAML==6.0.1
