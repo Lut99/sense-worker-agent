@@ -4,7 +4,7 @@
 # Created:
 #   10 Jul 2024, 19:57:00
 # Last edited:
-#   10 Jul 2024, 22:42:02
+#   11 Jul 2024, 18:56:54
 # Auto updated?
 #   Yes
 #
@@ -44,6 +44,51 @@ class SourceInfo:
 
         self.interface = interface
         self.port = port
+
+    def _parse(data: Dict[str, Any]) -> Optional[Any]:
+        """
+            Parses a SourceInfo from a YAML/JSON dictionary.
+
+            # Arguments
+            - `data`: The dictionary where we expect the info's entries.
+
+            # Returns
+            A new SourceInfo, or `None` if we failed to parse it.
+        """
+
+        interface = None
+        port = None
+        for ty, fields in data.items():
+            # We allow one of multiple node types
+            if ty == "interface":
+                # Expect a value of string
+                if not isinstance(fields, str):
+                    log.perror(f"\"interface\"-field in SourceInfo definition is not a string")
+                    return None
+                if interface is not None:
+                    log.perror(f"Duplicate \"interface\"-definition in SourceInfo definition")
+                    return None
+                interface = fields
+            elif ty == "port":
+                # Expect a value of integer
+                if not isinstance(fields, int):
+                    log.perror(f"\"port\"-field in SourceInfo definition is not an integer")
+                    return None
+                if port is not None:
+                    log.perror(f"Duplicate \"port\"-definition in SourceInfo definition")
+                    return None
+                port = fields
+            else:
+                log.pwarn(f"Unknown field '{ty}' for SourceInfo definition")
+        if interface is None:
+            log.perror(f"Missing \"interface\"-definition in SourceInfo definition")
+            return None
+        if port is None:
+            log.perror(f"Missing \"port\"-definition in SourceInfo definition")
+            return None
+
+        # OK! Done
+        return SourceInfo(interface, port)
 
     def fmt(self, indent: int = 0) -> str:
         """
@@ -107,6 +152,51 @@ class TargetInfo:
         # Set the port too
         self.port = port
 
+    def _parse(data: Dict[str, Any]) -> Optional[Any]:
+        """
+            Parses a TargetInfo from a YAML/JSON dictionary.
+
+            # Arguments
+            - `data`: The dictionary where we expect the info's entries.
+
+            # Returns
+            A new TargetInfo, or `None` if we failed to parse it.
+        """
+
+        addr = None
+        port = None
+        for ty, fields in data.items():
+            # We allow one of multiple node types
+            if ty == "addr":
+                # Expect a value of string
+                if not isinstance(fields, str):
+                    log.perror(f"\"addr\"-field in TargetInfo definition is not a string")
+                    return None
+                if addr is not None:
+                    log.perror(f"Duplicate \"addr\"-definition in TargetInfo definition")
+                    return None
+                addr = fields
+            elif ty == "port":
+                # Expect a value of integer
+                if not isinstance(fields, int):
+                    log.perror(f"\"port\"-field in TargetInfo definition is not an integer")
+                    return None
+                if port is not None:
+                    log.perror(f"Duplicate \"port\"-definition in TargetInfo definition")
+                    return None
+                port = fields
+            else:
+                log.pwarn(f"Unknown field '{ty}' for TargetInfo definition")
+        if addr is None:
+            log.perror(f"Missing \"addr\"-definition in TargetInfo definition")
+            return None
+        if port is None:
+            log.perror(f"Missing \"port\"-definition in TargetInfo definition")
+            return None
+
+        # OK! Done
+        return TargetInfo(addr, port)
+
     def fmt(self, indent: int = 0) -> str:
         """
             Formats a TargetInfo.
@@ -153,6 +243,31 @@ class Flow:
         self.source = source
         self.target = target
 
+    def _parse(data: Dict[str, Any]) -> Optional[Any]:
+        """
+            Parses any of the flows from the given dictionary.
+        """
+
+        # Make our decision based on the kind-field
+        if "kind" not in data:
+            log.perror(f"Missing \"kind\"-field in flow definition")
+            return None
+        if not isinstance(data["kind"], str):
+            log.perror(f"\"kind\"-field in flow definition is not a string")
+            return None
+        kind = data["kind"]
+
+        # Now decide
+        if kind == "TimedNoise":
+            if (flow := TimedNoiseFlow._parse(data)) is not None:
+                return flow
+            else:
+                log.perror(f"Failed to parse flow definition as a TimedNoiseFlow")
+                return None
+        else:
+            log.perror(f"Unknown flow kind '{kind}'")
+            return None
+
     @abc.abstractmethod
     def fmt(self, indent: int = 0) -> str:
         raise NotImplementedError()
@@ -179,6 +294,62 @@ class TimedNoiseFlow(Flow):
 
         # Don't forget to also store the time
         self.time = time
+
+    def _parse(data: Dict[str, Any]) -> Optional[Any]:
+        """
+            Parses a TimedNoiseFlow from a YAML/JSON dictionary.
+
+            # Arguments
+            - `data`: The dictionary where we expect the flow's entries.
+
+            # Returns
+            A new TimedNoiseFlow, or `None` if we failed to parse it.
+        """
+
+        time = None
+        source = None
+        target = None
+        for ty, fields in data.items():
+            # We allow one of multiple node types
+            if ty == "time":
+                # Expect a value of integer
+                if not isinstance(fields, int):
+                    log.perror(f"\"time\"-field in TimedNoiseFlow definition is not an integer")
+                    return None
+                if time is not None:
+                    log.perror(f"Duplicate \"time\"-definition in TimedNoiseFlow definition")
+                    return None
+                time = fields
+            elif ty == "source":
+                if not isinstance(fields, dict):
+                    log.perror(f"\"source\"-field in TimedNoiseFlow definition is not an object")
+                    return None
+                source = SourceInfo._parse(fields)
+                if source is None:
+                    log.perror(f"Failed to parse \"source\"-field in TimedNoiseFlow definition")
+                    return None
+            elif ty == "target":
+                if not isinstance(fields, dict):
+                    log.perror(f"\"target\"-field in TimedNoiseFlow definition is not an object")
+                    return None
+                target = TargetInfo._parse(fields)
+                if target is None:
+                    log.perror(f"Failed to parse \"target\"-field in TimedNoiseFlow definition")
+                    return None
+            elif ty != "kind":
+                log.pwarn(f"Unknown field '{ty}' for TimedNoiseFlow definition")
+        if time is None:
+            log.perror(f"Missing \"time\"-definition in TimedNoiseFlow definition")
+            return None
+        if source is None:
+            log.perror(f"Missing \"source\"-definition in TimedNoiseFlow definition")
+            return None
+        if target is None:
+            log.perror(f"Missing \"target\"-definition in TimedNoiseFlow definition")
+            return None
+
+        # OK! Done
+        return TimedNoiseFlow(time, source, target)
 
     def fmt(self, indent: int = 0) -> str:
         """
@@ -239,9 +410,9 @@ class Node(abc.ABC):
             Parses any of the nodes from the given dictionary.
         """
 
-        if (node := StartNode._parse(data)) is not None:
-            return node
-        elif (node := FlowNode._parse(data)) is not None:
+        # if (node := StartNode._parse(data)) is not None:
+        #     return node
+        if (node := FlowNode._parse(data)) is not None:
             return node
         elif (node := EndNode._parse(data)) is not None:
             return node
@@ -282,28 +453,50 @@ class StartNode(Node):
             A new StartNode, or `None` if we failed to parse it.
         """
 
-        # Parse the thing
-        if 'start' in data:
-            name = "start"
-            body = data['start']
-        elif '<start>' in data:
-            name = "<start>"
-            body = data['<start>']
-        else:
-            return None
-
-        # Assert it contains a list
-        if not isinstance(body, list):
-            log.perror(f"'{name}'-field is not an ordered list")
-            return None
-        outgoing = []
-        for data in body:
-            if (node := Node._parse(data)) is not None:
-                outgoing.append(node)
-            else:
-                log.perror(f"Failed to parse node in '{name}'-list")
+        node = None
+        for ty, fields in data.items():
+            # We're only parsing start nodes
+            if ty != "start" and type != "<start>":
                 return None
-        return StartNode(name, outgoing)
+            # Only parse the one though
+            if node is not None:
+                log.perror(f"Found duplicate '{ty}'-field")
+                return None
+            # Assert its fields are objects
+            if not isinstance(fields, dict):
+                log.perror(f"Body of '{ty}' is not an object")
+                return None
+            # Attempt to find the name
+            if "name" not in fields:
+                log.perror(f"Missing \"name\"-field for '{ty}'")
+                return None
+            name = fields["name"]
+
+            # Find the next nodes
+            if "next" not in fields:
+                log.perror(f"Missing \"next\"-field for '{name}'")
+                return None
+            if not isinstance(fields["next"], list):
+                log.perror(f"List of next-nodes of '{name}' is not an array")
+                return None
+            next = fields["next"]
+
+            # Parse the fields as an ordered list of nodes
+            node = StartNode(name, [])
+            for i, nested in enumerate(next):
+                if (nested := Node._parse(nested)) is not None:
+                    # Inject this node to incoming nodes
+                    nested.incoming.append(node)
+                    node.outgoing.append(nested)
+                else:
+                    log.perror(f"Failed to parse node {i} part of '{name}'")
+                    return None
+            if len(node.outgoing) == 0:
+                log.perror(f"Missing outgoing nodes for '{name}'")
+                return None
+
+        # OK! Done
+        return node
 
     def fmt(self, indent: int = 0) -> str:
         """
@@ -356,24 +549,68 @@ class FlowNode(Node):
             Parses an FlowNode from a YAML/JSON dictionary.
 
             # Arguments
-            - `data`: The dictionary where we expect a `start`-entry.
+            - `data`: The dictionary where we expect a `flow`-entry.
 
             # Returns
             A new FlowNode, or `None` if we failed to parse it.
         """
 
-        # Parse the thing
-        if 'flow' in data:
-            name = "flow"
-        elif '<flow>' in data:
-            name = "<flow>"
-        else:
-            return None
+        node = None
+        for ty, fields in data.items():
+            # We're only parsing flow nodes
+            if ty != "flow" and type != "<flow>":
+                return None
+            # Only parse the one though
+            if node is not None:
+                log.perror(f"Found duplicate '{ty}'-field")
+                return None
+            # Assert its fields are objects
+            if not isinstance(fields, dict):
+                log.perror(f"Body of '{ty}' is not an object")
+                return None
+            # Attempt to find the name
+            if "name" not in fields:
+                log.perror(f"Missing \"name\"-field for '{ty}'")
+                return None
+            name = fields["name"]
 
-        # Parse any outgoing
+            # Find the flow
+            if "flow" not in fields:
+                log.perror(f"Missing \"flow\"-field for '{name}'")
+                return None
+            if not isinstance(fields["flow"], dict):
+                log.perror(f"Flow-definition of '{name}' is not an object")
+                return None
+            flow = Flow._parse(fields["flow"])
+            if flow is None:
+                log.perror(f"Failed to parse flow definition of '{name}'")
+                return None
 
-        # Done
-        return EndNode(name, [])
+            # Find the next nodes
+            if "next" not in fields:
+                log.perror(f"Missing \"next\"-field for '{name}'")
+                return None
+            if not isinstance(fields["next"], list):
+                log.perror(f"List of next-nodes of '{name}' is not an array")
+                return None
+            next = fields["next"]
+
+            # Parse the fields as an ordered list of nodes
+            node = FlowNode(name, flow, [], [])
+            for i, nested in enumerate(next):
+                if (nested := Node._parse(nested)) is not None:
+                    # Inject this node to incoming nodes
+                    nested.incoming.append(node)
+                    node.outgoing.append(nested)
+                else:
+                    log.perror(f"Failed to parse node {i} part of '{name}'")
+                    return None
+            if len(node.outgoing) == 0:
+                log.perror(f"Missing outgoing nodes for '{name}'")
+                return None
+
+        # OK! Done
+        return node
 
     def fmt(self, indent: int = 0) -> str:
         """
@@ -422,16 +659,30 @@ class EndNode(Node):
             A new EndNode, or `None` if we failed to parse it.
         """
 
-        # Parse the thing
-        if 'end' in data:
-            name = "end"
-        elif '<end>' in data:
-            name = "<end>"
-        else:
-            return None
+        node = None
+        for ty, fields in data.items():
+            # We're only parsing end nodes
+            if ty != "end" and type != "<end>":
+                return None
+            # Only parse the one though
+            if node is not None:
+                log.perror(f"Found duplicate '{ty}'-field")
+                return None
+            # Assert its fields are objects
+            if not isinstance(fields, dict):
+                log.perror(f"Body of '{ty}' is not an object")
+                return None
+            # Attempt to find the name
+            if "name" not in fields:
+                log.perror(f"Missing \"name\"-field for '{ty}'")
+                return None
+            name = fields["name"]
 
-        # Done
-        return EndNode(name, [])
+            # OK
+            node = EndNode(name, [])
+
+        # OK! Done
+        return node
 
     def fmt(self, indent: int = 0) -> str:
         """

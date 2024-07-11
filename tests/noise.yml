@@ -1,4 +1,17 @@
 start:
-- flow:
-    flow: TimedNoise
-    time: 10
+  name: Start
+  next:
+  - flow:
+      name: Step1
+      flow:
+        kind: TimedNoise
+        time: 10
+        source:
+          interface: wlan0
+          port: 42080
+        target:
+          addr: localhost
+          port: 42081
+      next:
+      - end:
+          name: End
