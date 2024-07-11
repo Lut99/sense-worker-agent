@@ -5,7 +5,9 @@ start:
       name: Step1
       flow:
         kind: TimedNoise
-        time: 10
+        time: 10s
+        bandwidth: 1 MiB
+        chunk_size: 1 KiB
         source:
           interface: wlan0
           port: 42080

@@ -4,7 +4,7 @@
 # Created:
 #   10 Jul 2024, 19:57:00
 # Last edited:
-#   11 Jul 2024, 18:56:54
+#   11 Jul 2024, 19:58:56
 # Auto updated?
 #   Yes
 #
@@ -13,7 +13,10 @@
 #
 
 import abc
+import os
 import socket
+import threading
+import time
 import yaml
 from io import TextIOWrapper
 from ipaddress import AddressValueError, IPv4Address
@@ -22,7 +25,250 @@ from typing import Any, Dict, List, Optional, Union
 import lib.log as log
 
 
-##### LIBRARY #####
+##### HELPERS #####
+class Bytes:
+    """
+        Defines the parsing of human-friendly bytes.
+    """
+
+    amount: float
+
+    def __init__(self, amount: float):
+        """
+            Constructor for the Bytes.
+
+            # Arguments
+            - `amount`: The number of bytes to store.
+        """
+
+        self.amount = amount
+
+    def _parse(raw: str) -> Optional[Any]:
+        """
+            Attempts to parse some Bytes from a string.
+
+            # Arguments
+            - `raw`: The raw string to parse.
+
+            # Returns
+            A new Bytes on success, or else None.
+        """
+
+        # If it's just a number, then parse it as bytes
+        raw = raw.strip()
+        try:
+            return Bytes(float(raw))
+        except ValueError:
+            pass
+
+        # Else, see if it ends with something
+        factor = 1.0
+        if len(raw) >= 2 and raw[-2:] == "Kb":
+            # Kilobits
+            raw = raw[:-2]
+            factor = 1000.0 / 8.0
+        elif len(raw) >= 3 and raw[-3:] == "Kib":
+            # Kibibits
+            raw = raw[:-3]
+            factor = 1024.0 / 8.0
+        elif len(raw) >= 2 and raw[-2:] == "KB":
+            # Kilobytes
+            raw = raw[:-2]
+            factor = 1000.0
+        elif len(raw) >= 3 and raw[-3:] == "KiB":
+            # Kibibytes
+            raw = raw[:-3]
+            factor = 1024.0
+        elif len(raw) >= 2 and raw[-2:] == "Mb":
+            # Megabits
+            raw = raw[:-2]
+            factor = 1000.0 * 1000.0 / 8.0
+        elif len(raw) >= 3 and raw[-3:] == "Mib":
+            # Mebibits
+            raw = raw[:-3]
+            factor = 1024.0 * 1024.0 / 8.0
+        elif len(raw) >= 2 and raw[-2:] == "MB":
+            # Megabytes
+            raw = raw[:-2]
+            factor = 1000.0 * 1000.0
+        elif len(raw) >= 3 and raw[-3:] == "MiB":
+            # Mebibytes
+            raw = raw[:-3]
+            factor = 1024.0 * 1024.0
+        elif len(raw) >= 2 and raw[-2:] == "Gb":
+            # Gigabits
+            raw = raw[:-2]
+            factor = 1000.0 * 1000.0 * 1000.0 / 8.0
+        elif len(raw) >= 3 and raw[-3:] == "Gib":
+            # Gibibits
+            raw = raw[:-3]
+            factor = 1024.0 * 1024.0 * 1024.0 / 8.0
+        elif len(raw) >= 2 and raw[-2:] == "GB":
+            # Gigabytes
+            raw = raw[:-2]
+            factor = 1000.0 * 1000.0 * 1000.0
+        elif len(raw) >= 3 and raw[-3:] == "GiB":
+            # Gibibytes
+            raw = raw[:-3]
+            factor = 1024.0 * 1024.0 * 1024.0
+        elif len(raw) >= 1 and raw[-1:] == "b":
+            # Bits (at the end to not confuse with larger amounts)
+            raw = raw[:-1]
+            factor = 1.0 / 8.0
+        elif len(raw) >= 1 and raw[-1:] == "B":
+            # Bytes (at the end to not confuse with larger amounts)
+            raw = raw[:-1]
+            factor = 1.0
+        else:
+            log.perror(f"Failed to parse '{raw}' as human-readable bytes")
+
+        # Attempt to parse the remainder as a number
+        raw = raw.strip()
+        try:
+            return Bytes(factor * float(raw))
+        except ValueError:
+            log.perror(f"Failed to parse '{raw}' as a number for human-readable bytes")
+            return None
+
+    def as_human_bytes(self) -> str:
+        if self.amount >= 1000 * 1000 * 1000:
+            return f"{self.amount / (1000 * 1000 * 1000)} GB"
+        elif self.amount >= 1000 * 1000:
+            return f"{self.amount / (1000 * 1000)} MB"
+        elif self.amount >= 1000:
+            return f"{self.amount / 1000} KB"
+        else:
+            return f"{self.amount} B"
+    def as_human_bibi_bytes(self) -> str:
+        if self.amount >= 1024 * 1024 * 1024:
+            return f"{self.amount / (1024 * 1024 * 1024)} GiB"
+        elif self.amount >= 1024 * 1024:
+            return f"{self.amount / (1024 * 1024)} MiB"
+        elif self.amount >= 1024:
+            return f"{self.amount / 1024} KiB"
+        else:
+            return f"{self.amount} B"
+    def as_human_bits(self) -> str:
+        amount = 8 * self.amount
+        if amount >= 1000 * 1000 * 1000:
+            return f"{amount / (1000 * 1000 * 1000)} Gb"
+        elif amount >= 1000 * 1000:
+            return f"{amount / (1000 * 1000)} Mb"
+        elif amount >= 1000:
+            return f"{amount / 1000} Kb"
+        else:
+            return f"{amount} b"
+    def as_human_bibi_bits(self) -> str:
+        amount = 8 * self.amount
+        if amount >= 1024 * 1024 * 1024:
+            return f"{amount / (1024 * 1024 * 1024)} Gib"
+        elif amount >= 1024 * 1024:
+            return f"{amount / (1024 * 1024)} Mib"
+        elif amount >= 1024:
+            return f"{amount / 1024} Kib"
+        else:
+            return f"{amount} b"
+
+    def __str__(self) -> str:
+        return f"{self.amount} bytes"
+
+class Duration:
+    """
+        Defines the parsing of human-friendly durations.
+    """
+
+    amount: float
+
+    def __init__(self, amount: float):
+        """
+            Constructor for the Duration.
+
+            # Arguments
+            - `amount`: The number of seconds to store.
+        """
+
+        self.amount = amount
+
+    def _parse(raw: str) -> Optional[Any]:
+        """
+            Attempts to parse some Duration from a string.
+
+            # Arguments
+            - `raw`: The raw string to parse.
+
+            # Returns
+            A new Duration on success, or else None.
+        """
+
+        # If it's just a number, then parse it as seconds
+        raw = raw.strip()
+        try:
+            return Duration(float(raw))
+        except ValueError:
+            pass
+
+        # Else, see if it ends with something
+        factor = 1.0
+        if len(raw) >= 1 and raw[-1:] == "s":
+            # Seconds
+            raw = raw[:-1]
+            factor = 1.0
+        elif len(raw) >= 3 and raw[-3:] == "sec":
+            # Seconds
+            raw = raw[:-3]
+            factor = 1.0
+        elif len(raw) >= 7 and raw[-7:] == "seconds":
+            # Seconds
+            raw = raw[:-7]
+            factor = 1.0
+        elif len(raw) >= 1 and raw[-1:] == "m":
+            # Minutes
+            raw = raw[:-1]
+            factor = 60.0
+        elif len(raw) >= 3 and raw[-3:] == "min":
+            # Minutes
+            raw = raw[:-3]
+            factor = 60.0
+        elif len(raw) >= 7 and raw[-7:] == "minutes":
+            # Minutes
+            raw = raw[:-7]
+            factor = 60.0
+        elif len(raw) >= 1 and raw[-1:] == "h":
+            # Minutes
+            raw = raw[:-1]
+            factor = 60.0 * 60.0
+        elif len(raw) >= 2 and raw[-2:] == "hr":
+            # Minutes
+            raw = raw[:-2]
+            factor = 60.0 * 60.0
+        elif len(raw) >= 5 and raw[-5:] == "hours":
+            # Minutes
+            raw = raw[:-5]
+            factor = 60.0 * 60.0
+        else:
+            log.perror(f"Failed to parse '{raw}' as a human-readable duration")
+
+        # Attempt to parse the remainder as a number
+        raw = raw.strip()
+        try:
+            return Duration(factor * float(raw))
+        except ValueError:
+            log.perror(f"Failed to parse '{raw}' as a number for a human-readable duration")
+            return None
+
+    def as_human_duration(self) -> str:
+        if self.amount >= 60.0 * 60.0:
+            amount = self.amount / (60.0 * 60.0)
+            return f"{amount} {'hour' if amount == 1.0 else 'hours'}"
+        elif self.amount >= 60.0:
+            amount = self.amount / 60.0
+            return f"{amount} {'minute' if amount == 1.0 else 'minutes'}"
+        else:
+            return f"{self.amount} {'second' if self.amount == 1.0 else 'seconds'}"
+
+    def __str__(self) -> str:
+        return f"{self.amount} {'second' if self.amount == 1.0 else 'seconds'}"
+
 class SourceInfo:
     """
         Collects information about where to send a `Flow`'s traffic from.
@@ -219,6 +465,9 @@ class TargetInfo:
 
 
 
+
+
+##### AUXILLARY #####
 class Flow:
     """
         Represents some simulation of a service.
@@ -230,6 +479,8 @@ class Flow:
     source: SourceInfo
     # A description of where to send this Flow's traffic to.
     target: TargetInfo
+    # Whether the flow has completed running in the background or not.
+    done: bool
 
     def __init__(self, source: SourceInfo, target: TargetInfo):
         """
@@ -242,6 +493,15 @@ class Flow:
 
         self.source = source
         self.target = target
+        self.done = False
+
+    @abc.abstractmethod
+    def spawn(self):
+        """
+            Starts running the flow on a separated thread.
+        """
+
+        raise NotImplementedError()
 
     def _parse(data: Dict[str, Any]) -> Optional[Any]:
         """
@@ -278,14 +538,20 @@ class TimedNoiseFlow(Flow):
     """
 
     # The time to run the flow for, in seconds.
-    time: int
+    time: Duration
+    # The bandwidth of data to send, in bytes/sec.
+    bandwidth: Bytes
+    # The size of every packet, in bytes.
+    chunk_size: Bytes
 
-    def __init__(self, time: int, source: SourceInfo, target: TargetInfo):
+    def __init__(self, time: Duration, bandwidth: Bytes, chunk_size: Bytes, source: SourceInfo, target: TargetInfo):
         """
             Constructor for the TimedNoiseFlow.
 
             # Arguments
             - `time`: The time to sent traffic for.
+            - `bandwidth`: The amount of bytes/sec to try and get out per second.
+            - `chunk_size`: The size per packet.
             - `source`: A description of where to send this Flow's traffic from.
             - `target`: A description of where to send this Flow's traffic to.
         """
@@ -294,6 +560,37 @@ class TimedNoiseFlow(Flow):
 
         # Don't forget to also store the time
         self.time = time
+        self.bandwidth = bandwidth
+        self.chunk_size = chunk_size
+
+    def spawn(self):
+        """
+            Starts running the flow on a separated thread.
+        """
+
+        def flow():
+            """
+                The actual flow running on a background thread.
+            """
+            log.pinfo(f"Starting TimedNoiseFlow of {self.bandwidth.as_human_bibi_bytes()}/sec in chunks of {self.chunk_size.as_human_bibi_bytes()} to '{self.target.addr}:{self.target.port}' for {self.time.as_human_duration()}")
+
+            # Start sending random UDP packets
+            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            start = time.time()
+            while time.time() - start < self.time.amount:
+                # Send a chunk
+                chunk = os.urandom(int(self.chunk_size.amount))
+                sock.send(chunk, (str(self.target.addr), self.target.port))
+
+                # Wait the appropriate amount of time before sending the next chunk
+                time.sleep(1.0 / (self.bandwidth / self.chunk_size))
+
+            # Done
+            self.done = True
+
+        # Spawn a thread
+        bg = threading.Thread(target=flow, args=(), daemon=True)
+        bg.start()
 
     def _parse(data: Dict[str, Any]) -> Optional[Any]:
         """
@@ -307,19 +604,48 @@ class TimedNoiseFlow(Flow):
         """
 
         time = None
+        bandwidth = None
+        chunk_size = None
         source = None
         target = None
         for ty, fields in data.items():
             # We allow one of multiple node types
             if ty == "time":
                 # Expect a value of integer
-                if not isinstance(fields, int):
-                    log.perror(f"\"time\"-field in TimedNoiseFlow definition is not an integer")
+                if not isinstance(fields, int) and not isinstance(fields, str):
+                    log.perror(f"\"time\"-field in TimedNoiseFlow definition is not an integer or string")
                     return None
                 if time is not None:
                     log.perror(f"Duplicate \"time\"-definition in TimedNoiseFlow definition")
                     return None
-                time = fields
+                time = Duration._parse(str(fields))
+                if time is None:
+                    log.perror(f"Failed to parse \"time\"-definition in TimedNoiseFlow definition")
+                    return None
+            elif ty == "bandwidth":
+                # Expect a value of integer
+                if not isinstance(fields, int) and not isinstance(fields, str):
+                    log.perror(f"\"bandwidth\"-field in TimedNoiseFlow definition is not an integer or string")
+                    return None
+                if bandwidth is not None:
+                    log.perror(f"Duplicate \"bandwidth\"-definition in TimedNoiseFlow definition")
+                    return None
+                bandwidth = Bytes._parse(str(fields))
+                if bandwidth is None:
+                    log.perror(f"Failed to parse \"bandwidth\"-definition in TimedNoiseFlow definition")
+                    return None
+            elif ty == "chunk_size":
+                # Expect a value of integer
+                if not isinstance(fields, int) and not isinstance(fields, str):
+                    log.perror(f"\"chunk_size\"-field in TimedNoiseFlow definition is not an integer or string")
+                    return None
+                if chunk_size is not None:
+                    log.perror(f"Duplicate \"chunk_size\"-definition in TimedNoiseFlow definition")
+                    return None
+                chunk_size = Bytes._parse(str(fields))
+                if chunk_size is None:
+                    log.perror(f"Failed to parse \"chunk_size\"-definition in TimedNoiseFlow definition")
+                    return None
             elif ty == "source":
                 if not isinstance(fields, dict):
                     log.perror(f"\"source\"-field in TimedNoiseFlow definition is not an object")
@@ -341,6 +667,12 @@ class TimedNoiseFlow(Flow):
         if time is None:
             log.perror(f"Missing \"time\"-definition in TimedNoiseFlow definition")
             return None
+        if bandwidth is None:
+            log.perror(f"Missing \"bandwidth\"-definition in TimedNoiseFlow definition")
+            return None
+        if chunk_size is None:
+            log.perror(f"Missing \"chunk_size\"-definition in TimedNoiseFlow definition")
+            return None
         if source is None:
             log.perror(f"Missing \"source\"-definition in TimedNoiseFlow definition")
             return None
@@ -349,7 +681,7 @@ class TimedNoiseFlow(Flow):
             return None
 
         # OK! Done
-        return TimedNoiseFlow(time, source, target)
+        return TimedNoiseFlow(time, bandwidth, chunk_size, source, target)
 
     def fmt(self, indent: int = 0) -> str:
         """
@@ -364,13 +696,18 @@ class TimedNoiseFlow(Flow):
 
         res = f"{' ' * indent}TimedNoiseFlow:\n"
         indent += 4
-        res += f"{' ' * indent}time: {self.time}s\n"
+        res += f"{' ' * indent}time: {self.time.as_human_duration()}\n"
+        res += f"{' ' * indent}bandwidth: {self.bandwidth.as_human_bibi_bytes()}\n"
+        res += f"{' ' * indent}chunk_size: {self.chunk_size.as_human_bibi_bytes()}\n"
         res += self.source.fmt(indent)
         res += self.target.fmt(indent)
         return res
 
 
 
+
+
+##### LIBRARY #####
 class Node(abc.ABC):
     """
         Defines a baseclass for Workflow nodes.
